@@ -1,0 +1,6 @@
+nohup: ignoring input
+Starting Attendance Management System API Server...
+WARNING: MYSQL_OPT_RECONNECT is deprecated and will be removed in a future version.
+Database connected successfully!
+API Server running on http://localhost:8080
+Access web interface at http://localhost:8080

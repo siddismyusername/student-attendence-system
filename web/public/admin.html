@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="dashboard">
+            <div class="dashboard-header">
+                <h1>Admin Dashboard</h1>
+                <div class="user-info">
+                    <p><strong>Role:</strong> Administrator</p>
+                    <p id="admin-email"></p>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
+
+            <div class="nav-menu">
+                <button class="active" onclick="showSection('subjects')">Subjects</button>
+                <button onclick="showSection('classes')">Classes</button>
+                <button onclick="showSection('teachers')">Teachers</button>
+                <button onclick="showSection('students')">Students</button>
+                <button onclick="showSection('assignments')">Assignments</button>
+            </div>
+
+            <!-- Subjects Section -->
+            <div id="subjects-section" class="section active">
+                <div class="card">
+                    <h3>Manage Subjects</h3>
+                    <form id="subject-form" onsubmit="createSubject(event)">
+                        <div class="form-group">
+                            <label>Subject Name</label>
+                            <input type="text" id="subject-name" required placeholder="e.g., Mathematics">
+                        </div>
+                        <button type="submit" class="btn">Add Subject</button>
+                    </form>
+                </div>
+                <div class="table-container">
+                    <h3>All Subjects</h3>
+                    <div id="subjects-list"></div>
+                </div>
+            </div>
+
+            <!-- Classes Section -->
+            <div id="classes-section" class="section">
+                <div class="card">
+                    <h3>Manage Classes</h3>
+                    <form id="class-form" onsubmit="createClass(event)">
+                        <div class="form-group">
+                            <label>Class Name</label>
+                            <input type="text" id="class-name" required placeholder="e.g., Grade 10A">
+                        </div>
+                        <button type="submit" class="btn">Add Class</button>
+                    </form>
+                </div>
+                <div class="table-container">
+                    <h3>All Classes</h3>
+                    <div id="classes-list"></div>
+                </div>
+            </div>
+
+            <!-- Teachers Section -->
+            <div id="teachers-section" class="section">
+                <div class="card">
+                    <h3>Manage Teachers</h3>
+                    <form id="teacher-form" onsubmit="createTeacher(event)">
+                        <div class="form-group">
+                            <label>Teacher Name</label>
+                            <input type="text" id="teacher-name" required placeholder="e.g., John Smith">
+                        </div>
+                        <div class="form-group">
+                            <label>Email</label>
+                            <input type="email" id="teacher-email" required placeholder="teacher@school.com">
+                        </div>
+                        <div class="form-group">
+                            <label>Password</label>
+                            <input type="password" id="teacher-password" required placeholder="Password">
+                        </div>
+                        <button type="submit" class="btn">Add Teacher</button>
+                    </form>
+                </div>
+                <div class="table-container">
+                    <h3>All Teachers</h3>
+                    <div id="teachers-list"></div>
+                </div>
+            </div>
+
+            <!-- Students Section -->
+            <div id="students-section" class="section">
+                <div class="card">
+                    <h3>Manage Students</h3>
+                    <form id="student-form" onsubmit="createStudent(event)">
+                        <div class="form-group">
+                            <label>Student Name</label>
+                            <input type="text" id="student-name" required placeholder="e.g., Jane Doe">
+                        </div>
+                        <button type="submit" class="btn">Add Student</button>
+                    </form>
+                </div>
+                <div class="table-container">
+                    <h3>All Students</h3>
+                    <div id="students-list"></div>
+                </div>
+            </div>
+
+            <!-- Assignments Section -->
+            <div id="assignments-section" class="section">
+                <div class="grid">
+                    <div class="card">
+                        <h3>Assign Class Teacher</h3>
+                        <form id="assign-class-teacher-form" onsubmit="assignClassTeacher(event)">
+                            <div class="form-group">
+                                <label>Select Teacher</label>
+                                <select id="ct-teacher" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Select Class</label>
+                                <select id="ct-class" required></select>
+                            </div>
+                            <button type="submit" class="btn">Assign Class Teacher</button>
+                        </form>
+                    </div>
+
+                    <div class="card">
+                        <h3>Assign Subject Teacher</h3>
+                        <form id="assign-subject-teacher-form" onsubmit="assignSubjectTeacher(event)">
+                            <div class="form-group">
+                                <label>Select Teacher</label>
+                                <select id="st-teacher" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Select Subject</label>
+                                <select id="st-subject" required></select>
+                            </div>
+                            <button type="submit" class="btn">Assign Subject Teacher</button>
+                        </form>
+                    </div>
+
+                    <div class="card">
+                        <h3>Add Subject to Class</h3>
+                        <form id="add-subject-class-form" onsubmit="addSubjectToClass(event)">
+                            <div class="form-group">
+                                <label>Select Class</label>
+                                <select id="sc-class" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Select Subject</label>
+                                <select id="sc-subject" required></select>
+                            </div>
+                            <button type="submit" class="btn">Add Subject to Class</button>
+                        </form>
+                    </div>
+
+                    <div class="card">
+                        <h3>Assign Student to Class</h3>
+                        <form id="assign-student-class-form" onsubmit="assignStudentToClass(event)">
+                            <div class="form-group">
+                                <label>Select Student</label>
+                                <select id="stc-student" required></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Select Class</label>
+                                <select id="stc-class" required></select>
+                            </div>
+                            <button type="submit" class="btn">Assign Student to Class</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        // Check authentication
+        const user = checkAuth();
+        if (!user || user.role !== 'admin') {
+            window.location.href = 'index.html';
+        }
+
+        document.getElementById('admin-email').textContent = user.email;
+
+        // Section Navigation
+        function showSection(section) {
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.nav-menu button').forEach(b => b.classList.remove('active'));
+            
+            document.getElementById(section + '-section').classList.add('active');
+            event.target.classList.add('active');
+
+            // Load data for the section
+            switch(section) {
+                case 'subjects': loadSubjects(); break;
+                case 'classes': loadClasses(); break;
+                case 'teachers': loadTeachers(); break;
+                case 'students': loadStudents(); break;
+                case 'assignments': loadAssignmentData(); break;
+            }
+        }
+
+        // Subject Functions
+        async function createSubject(event) {
+            event.preventDefault();
+            const name = document.getElementById('subject-name').value;
+
+            const response = await API.createSubject(name);
+            if (response.success) {
+                alert('Subject created successfully!');
+                document.getElementById('subject-form').reset();
+                loadSubjects();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        async function loadSubjects() {
+            showLoading('subjects-list');
+            const response = await API.getSubjects();
+            
+            if (response.success) {
+                const subjects = response.data;
+                let html = '<table><thead><tr><th>ID</th><th>Name</th><th>Max Marks</th><th>Actions</th></tr></thead><tbody>';
+                
+                subjects.forEach(subject => {
+                    html += `<tr>
+                        <td>${subject.id || '-'}</td>
+                        <td>${subject.name || '-'}</td>
+                        <td>${subject.max_marks || 100}</td>
+                        <td>
+                            <button class="btn-delete btn-small" onclick="deleteSubject(${subject.id})">Delete</button>
+                        </td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                document.getElementById('subjects-list').innerHTML = html;
+            } else {
+                showError('subjects-list', response.error);
+            }
+        }
+
+        async function deleteSubject(id) {
+            if (confirm('Are you sure you want to delete this subject?')) {
+                const response = await API.deleteSubject(id);
+                if (response.success) {
+                    alert('Subject deleted successfully!');
+                    loadSubjects();
+                } else {
+                    alert('Error: ' + response.error);
+                }
+            }
+        }
+
+        // Class Functions
+        async function createClass(event) {
+            event.preventDefault();
+            const name = document.getElementById('class-name').value;
+
+            const response = await API.createClass(name);
+            if (response.success) {
+                alert('Class created successfully!');
+                document.getElementById('class-form').reset();
+                loadClasses();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        async function loadClasses() {
+            showLoading('classes-list');
+            const response = await API.getClasses();
+            
+            if (response.success) {
+                const classes = response.data;
+                let html = '<table><thead><tr><th>ID</th><th>Name</th><th>Actions</th></tr></thead><tbody>';
+                
+                classes.forEach(cls => {
+                    html += `<tr>
+                        <td>${cls.id || '-'}</td>
+                        <td>${cls.name || '-'}</td>
+                        <td>
+                            <button class="btn-delete btn-small" onclick="deleteClass(${cls.id})">Delete</button>
+                        </td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                document.getElementById('classes-list').innerHTML = html;
+            } else {
+                showError('classes-list', response.error);
+            }
+        }
+
+        async function deleteClass(id) {
+            if (confirm('Are you sure you want to delete this class?')) {
+                const response = await API.deleteClass(id);
+                if (response.success) {
+                    alert('Class deleted successfully!');
+                    loadClasses();
+                } else {
+                    alert('Error: ' + response.error);
+                }
+            }
+        }
+
+        // Teacher Functions
+        async function createTeacher(event) {
+            event.preventDefault();
+            const name = document.getElementById('teacher-name').value;
+            const email = document.getElementById('teacher-email').value;
+            const password = document.getElementById('teacher-password').value;
+
+            const response = await API.createTeacher(name, email, password);
+            if (response.success) {
+                alert('Teacher created successfully!');
+                document.getElementById('teacher-form').reset();
+                loadTeachers();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        async function loadTeachers() {
+            showLoading('teachers-list');
+            const response = await API.getTeachers();
+            
+            if (response.success) {
+                const teachers = response.data;
+                let html = '<table><thead><tr><th>ID</th><th>Name</th><th>Email</th><th>Type</th><th>Class</th><th>Actions</th></tr></thead><tbody>';
+                
+                teachers.forEach(teacher => {
+                    html += `<tr>
+                        <td>${teacher.id || '-'}</td>
+                        <td>${teacher.name || '-'}</td>
+                        <td>${teacher.email || '-'}</td>
+                        <td>${teacher.type || '-'}</td>
+                        <td>${teacher.className || 'Not Assigned'}</td>
+                        <td>
+                            <button class="btn-delete btn-small" onclick="deleteTeacher(${teacher.id})">Delete</button>
+                        </td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                document.getElementById('teachers-list').innerHTML = html;
+            } else {
+                showError('teachers-list', response.error);
+            }
+        }
+
+        async function deleteTeacher(id) {
+            if (confirm('Are you sure you want to delete this teacher?')) {
+                const response = await API.deleteTeacher(id);
+                if (response.success) {
+                    alert('Teacher deleted successfully!');
+                    loadTeachers();
+                } else {
+                    alert('Error: ' + response.error);
+                }
+            }
+        }
+
+        // Student Functions
+        async function createStudent(event) {
+            event.preventDefault();
+            const name = document.getElementById('student-name').value;
+
+            const response = await API.createStudent(name);
+            if (response.success) {
+                alert('Student created successfully!');
+                document.getElementById('student-form').reset();
+                loadStudents();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        async function loadStudents() {
+            showLoading('students-list');
+            const response = await API.getStudents();
+            
+            if (response.success) {
+                const students = response.data;
+                let html = '<table><thead><tr><th>ID</th><th>Name</th><th>Class</th><th>Actions</th></tr></thead><tbody>';
+                
+                students.forEach(student => {
+                    html += `<tr>
+                        <td>${student.id || '-'}</td>
+                        <td>${student.name || '-'}</td>
+                        <td>${student.className || 'Not Assigned'}</td>
+                        <td>
+                            <button class="btn-delete btn-small" onclick="deleteStudent(${student.id})">Delete</button>
+                        </td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table>';
+                document.getElementById('students-list').innerHTML = html;
+            } else {
+                showError('students-list', response.error);
+            }
+        }
+
+        async function deleteStudent(id) {
+            if (confirm('Are you sure you want to delete this student?')) {
+                const response = await API.deleteStudent(id);
+                if (response.success) {
+                    alert('Student deleted successfully!');
+                    loadStudents();
+                } else {
+                    alert('Error: ' + response.error);
+                }
+            }
+        }
+
+        // Assignment Functions
+        async function loadAssignmentData() {
+            const [teachers, classes, subjects, students] = await Promise.all([
+                API.getTeachers(),
+                API.getClasses(),
+                API.getSubjects(),
+                API.getStudents()
+            ]);
+
+            // Populate teacher dropdowns
+            if (teachers.success) {
+                const teacherOptions = teachers.data.map(t => 
+                    `<option value="${t.id}">${t.name}</option>`
+                ).join('');
+                document.getElementById('ct-teacher').innerHTML = '<option value="">Select Teacher</option>' + teacherOptions;
+                document.getElementById('st-teacher').innerHTML = '<option value="">Select Teacher</option>' + teacherOptions;
+            }
+
+            // Populate class dropdowns
+            if (classes.success) {
+                const classOptions = classes.data.map(c => 
+                    `<option value="${c.id}">${c.name}</option>`
+                ).join('');
+                document.getElementById('ct-class').innerHTML = '<option value="">Select Class</option>' + classOptions;
+                document.getElementById('sc-class').innerHTML = '<option value="">Select Class</option>' + classOptions;
+                document.getElementById('stc-class').innerHTML = '<option value="">Select Class</option>' + classOptions;
+            }
+
+            // Populate subject dropdowns
+            if (subjects.success) {
+                const subjectOptions = subjects.data.map(s => 
+                    `<option value="${s.id}">${s.name}</option>`
+                ).join('');
+                document.getElementById('st-subject').innerHTML = '<option value="">Select Subject</option>' + subjectOptions;
+                document.getElementById('sc-subject').innerHTML = '<option value="">Select Subject</option>' + subjectOptions;
+            }
+
+            // Populate student dropdown
+            if (students.success) {
+                const studentOptions = students.data.map(s => 
+                    `<option value="${s.id}">${s.name}</option>`
+                ).join('');
+                document.getElementById('stc-student').innerHTML = '<option value="">Select Student</option>' + studentOptions;
+            }
+        }
+
+        async function assignClassTeacher(event) {
+            event.preventDefault();
+            const teacherId = document.getElementById('ct-teacher').value;
+            const classId = document.getElementById('ct-class').value;
+
+            const response = await API.assignClassTeacher(teacherId, classId);
+            if (response.success) {
+                alert('Class teacher assigned successfully!');
+                document.getElementById('assign-class-teacher-form').reset();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        async function assignSubjectTeacher(event) {
+            event.preventDefault();
+            const teacherId = document.getElementById('st-teacher').value;
+            const subjectId = document.getElementById('st-subject').value;
+
+            const response = await API.assignSubjectTeacher(teacherId, subjectId);
+            if (response.success) {
+                alert('Subject teacher assigned successfully!');
+                document.getElementById('assign-subject-teacher-form').reset();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        async function addSubjectToClass(event) {
+            event.preventDefault();
+            const classId = document.getElementById('sc-class').value;
+            const subjectId = document.getElementById('sc-subject').value;
+
+            const response = await API.addSubjectToClass(classId, subjectId);
+            if (response.success) {
+                alert('Subject added to class successfully!');
+                document.getElementById('add-subject-class-form').reset();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        async function assignStudentToClass(event) {
+            event.preventDefault();
+            const studentId = document.getElementById('stc-student').value;
+            const classId = document.getElementById('stc-class').value;
+
+            const response = await API.assignStudentToClass(studentId, classId);
+            if (response.success) {
+                alert('Student assigned to class successfully!');
+                document.getElementById('assign-student-class-form').reset();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        // Initial load
+        loadSubjects();
+    </script>
+</body>
+</html>

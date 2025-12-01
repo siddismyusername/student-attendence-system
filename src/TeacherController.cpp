@@ -24,6 +24,24 @@ void TeacherController::markAttendance() {
         int classId = stoi(assignment["class_id"]);
         cout << "Your Class: " << assignment["class_name"] << endl;
         
+        // Get subjects that this teacher is assigned to teach (as SubjectTeacher) in their class
+        auto teacherSubjects = db->getTeacherSubjectAssignments(teacherId);
+        
+        // Filter to only subjects in this specific class
+        vector<map<string, string>> assignedSubjects;
+        for (const auto& subj : teacherSubjects) {
+            if (stoi(subj.at("class_id")) == classId) {
+                assignedSubjects.push_back(subj);
+            }
+        }
+        
+        if (assignedSubjects.empty()) {
+            cout << "\nYou are not assigned to teach any subjects in this class." << endl;
+            cout << "ClassTeacher can only mark attendance for subjects they are assigned to teach." << endl;
+            UIHelper::pause();
+            return;
+        }
+        
         // Get students in this class
         auto students = db->getStudentsByClass(classId);
         if (students.empty()) {
@@ -32,26 +50,26 @@ void TeacherController::markAttendance() {
             return;
         }
         
-        // Get subjects for this class
-        auto subjects = db->getClassSubjects(classId);
-        if (subjects.empty()) {
-            cout << "No subjects assigned to this class." << endl;
-            UIHelper::pause();
-            return;
-        }
-        
-        cout << "\nAvailable Subjects:" << endl;
+        cout << "\nYour Assigned Subjects:" << endl;
         UIHelper::printSeparator(40);
-        for (const auto& subject : subjects) {
-            cout << "ID: " << subject.at("subject_id") << " - " << subject.at("name") << endl;
+        for (const auto& subject : assignedSubjects) {
+            cout << "ID: " << subject.at("subject_id") << " - " << subject.at("subject_name") << endl;
         }
         UIHelper::printSeparator(40);
         
         int subjectId = getIntInput("\nEnter subject ID: ");
         
-        // Validate subject is assigned to this class
-        if (!db->isSubjectInClass(subjectId, classId)) {
-            cout << "\nError: This subject is not assigned to your class!" << endl;
+        // Validate teacher is assigned to this subject
+        bool isAssigned = false;
+        for (const auto& subj : assignedSubjects) {
+            if (stoi(subj.at("subject_id")) == subjectId) {
+                isAssigned = true;
+                break;
+            }
+        }
+        
+        if (!isAssigned) {
+            cout << "\nError: You are not assigned to teach this subject!" << endl;
             UIHelper::pause();
             return;
         }

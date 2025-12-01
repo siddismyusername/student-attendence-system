@@ -11,6 +11,11 @@ using namespace std;
 class Database {
 private:
     MYSQL* conn;
+    map<string, string> connectionConfig;
+    
+    // Helper method for connection management
+    bool reconnect();
+    bool ensureConnection();
     
 public:
     Database(const map<string, string>& config);

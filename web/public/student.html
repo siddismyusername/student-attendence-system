@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="dashboard">
+            <div class="dashboard-header">
+                <h1>Student Dashboard</h1>
+                <div class="user-info">
+                    <p><strong>Name:</strong> <span id="student-name"></span></p>
+                    <p><strong>Class:</strong> <span id="student-class"></span></p>
+                    <p id="student-email"></p>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
+
+            <div class="nav-menu">
+                <button class="active" onclick="showSection('overview')">Overview</button>
+                <button onclick="showSection('attendance')">My Attendance</button>
+                <button onclick="showSection('profile')">Update Profile</button>
+            </div>
+
+            <!-- Overview Section -->
+            <div id="overview-section" class="section active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Overall Attendance</h3>
+                        <div class="stat-value" id="overall-percentage">--%</div>
+                    </div>
+                    <div class="stat-card">
+                        <h3>My Class</h3>
+                        <div class="stat-value" id="class-name-stat" style="font-size: 24px;">--</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Subject-wise Attendance</h3>
+                    <div id="subject-attendance-list"></div>
+                </div>
+            </div>
+
+            <!-- My Attendance Section -->
+            <div id="attendance-section" class="section">
+                <div class="card">
+                    <h3>View My Attendance</h3>
+                    <form id="view-attendance-form" onsubmit="viewMyAttendance(event)">
+                        <div class="form-group">
+                            <label>Select Subject</label>
+                            <select id="attendance-subject" required></select>
+                        </div>
+                        <button type="submit" class="btn">View Attendance</button>
+                    </form>
+                </div>
+                <div id="attendance-records"></div>
+            </div>
+
+            <!-- Update Profile Section -->
+            <div id="profile-section" class="section">
+                <div class="card">
+                    <h3>Update Profile</h3>
+                    <form id="profile-form" onsubmit="updateProfile(event)">
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" id="profile-name" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Class (Read-only)</label>
+                            <input type="text" id="profile-class" readonly>
+                        </div>
+                        <button type="submit" class="btn">Update Name</button>
+                    </form>
+                    <div id="profile-message"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        // Check authentication
+        const user = checkAuth();
+        if (!user || user.role !== 'student') {
+            window.location.href = 'index.html';
+        }
+
+        document.getElementById('student-name').textContent = user.name;
+        document.getElementById('student-class').textContent = user.className || 'Not Assigned';
+        document.getElementById('student-email').textContent = user.email;
+
+        let classSubjects = [];
+
+        // Section Navigation
+        function showSection(section) {
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.nav-menu button').forEach(b => b.classList.remove('active'));
+            
+            document.getElementById(section + '-section').classList.add('active');
+            event.target.classList.add('active');
+
+            // Load data for the section
+            switch(section) {
+                case 'overview': loadOverview(); break;
+                case 'attendance': loadAttendanceSubjects(); break;
+                case 'profile': loadProfile(); break;
+            }
+        }
+
+        // Load Overview
+        async function loadOverview() {
+            // Update class name
+            document.getElementById('class-name-stat').textContent = user.className || 'Not Assigned';
+
+            // Load overall attendance percentage
+            const percentageResp = await API.getAttendancePercentage(user.studentId);
+            if (percentageResp.success) {
+                document.getElementById('overall-percentage').textContent = 
+                    percentageResp.data.percentage.toFixed(2) + '%';
+            }
+
+            // Load class subjects
+            if (user.classId > 0) {
+                const subjectsResp = await API.getClassSubjects(user.classId);
+                
+                if (subjectsResp.success) {
+                    classSubjects = subjectsResp.data;
+                    await loadSubjectAttendance();
+                }
+            } else {
+                document.getElementById('subject-attendance-list').innerHTML = 
+                    '<p>You are not assigned to any class yet.</p>';
+            }
+        }
+
+        async function loadSubjectAttendance() {
+            showLoading('subject-attendance-list');
+            
+            let html = '<table><thead><tr><th>Subject</th><th>Attendance %</th></tr></thead><tbody>';
+            
+            for (const subject of classSubjects) {
+                const percentageResp = await API.getSubjectAttendancePercentage(user.studentId, subject.id);
+                const percentage = percentageResp.success ? percentageResp.data.percentage : 0;
+                
+                const statusClass = percentage >= 75 ? 'status-present' : 
+                                   percentage >= 50 ? 'status-late' : 'status-absent';
+                
+                html += `<tr>
+                    <td>${subject.name || '-'}</td>
+                    <td class="${statusClass}">${percentage.toFixed(2)}%</td>
+                </tr>`;
+            }
+            
+            html += '</tbody></table>';
+            document.getElementById('subject-attendance-list').innerHTML = html;
+        }
+
+        // View Attendance Functions
+        async function loadAttendanceSubjects() {
+            if (user.classId > 0) {
+                const response = await API.getClassSubjects(user.classId);
+                
+                if (response.success) {
+                    const subjects = response.data;
+                    const options = subjects.map(s => 
+                        `<option value="${s.id}">${s.name}</option>`
+                    ).join('');
+                    document.getElementById('attendance-subject').innerHTML = 
+                        '<option value="">Select Subject</option>' + options;
+                }
+            }
+        }
+
+        async function viewMyAttendance(event) {
+            event.preventDefault();
+            
+            const subjectId = document.getElementById('attendance-subject').value;
+
+            showLoading('attendance-records');
+
+            const [attendanceResp, percentageResp] = await Promise.all([
+                API.getStudentAttendance(user.studentId, subjectId),
+                API.getSubjectAttendancePercentage(user.studentId, subjectId)
+            ]);
+
+            if (attendanceResp.success) {
+                const records = attendanceResp.data;
+                const percentage = percentageResp.success ? percentageResp.data.percentage : 0;
+
+                // Find subject name
+                const subject = classSubjects.find(s => s.id == subjectId);
+                const subjectName = subject ? subject.name : 'Subject';
+
+                let html = `<div class="card">
+                    <h3>${subjectName} - Attendance Records</h3>
+                    <p><strong>Attendance Percentage:</strong> 
+                        <span class="${percentage >= 75 ? 'status-present' : percentage >= 50 ? 'status-late' : 'status-absent'}">
+                            ${percentage.toFixed(2)}%
+                        </span>
+                    </p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+
+                if (records.length === 0) {
+                    html += '<tr><td colspan="2">No attendance records found</td></tr>';
+                } else {
+                    // Sort by date (newest first)
+                    records.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    
+                    records.forEach(record => {
+                        html += `<tr>
+                            <td>${formatDate(record.date || '')}</td>
+                            <td class="${getAttendanceStatusClass(record.status || '')}">${record.status || '-'}</td>
+                        </tr>`;
+                    });
+                }
+
+                html += '</tbody></table></div>';
+                document.getElementById('attendance-records').innerHTML = html;
+            } else {
+                showError('attendance-records', attendanceResp.error);
+            }
+        }
+
+        // Profile Functions
+        function loadProfile() {
+            document.getElementById('profile-name').value = user.name;
+            document.getElementById('profile-class').value = user.className || 'Not Assigned';
+            document.getElementById('profile-message').innerHTML = '';
+        }
+
+        async function updateProfile(event) {
+            event.preventDefault();
+            
+            const newName = document.getElementById('profile-name').value;
+
+            const response = await API.updateStudentProfile(user.studentId, newName);
+            
+            if (response.success) {
+                // Update session storage
+                user.name = newName;
+                sessionStorage.setItem('user', JSON.stringify(user));
+                
+                // Update UI
+                document.getElementById('student-name').textContent = newName;
+                showSuccess('profile-message', 'Profile updated successfully!');
+            } else {
+                showError('profile-message', 'Error: ' + response.error);
+            }
+        }
+
+        // Initial load
+        loadOverview();
+    </script>
+</body>
+</html>

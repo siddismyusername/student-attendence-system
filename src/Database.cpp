@@ -5,13 +5,23 @@
 
 using namespace std;
 
-Database::Database(const map<string, string>& config) {
+Database::Database(const map<string, string>& config) : connectionConfig(config) {
     conn = mysql_init(nullptr);
     
     if (conn == nullptr) {
         cerr << "MySQL initialization failed" << endl;
         return;
     }
+    
+    // Enable auto-reconnect
+    bool auto_reconnect = true;
+    mysql_options(conn, MYSQL_OPT_RECONNECT, &auto_reconnect);
+    
+    // Set connection timeout
+    unsigned int timeout = 28800; // 8 hours
+    mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+    mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+    mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
     
     string host = config.count("host") ? config.at("host") : "localhost";
     string user = config.count("user") ? config.at("user") : "root";
@@ -37,7 +47,76 @@ bool Database::isConnected() const {
     return conn != nullptr;
 }
 
+bool Database::reconnect() {
+    // Close existing connection only if it's valid
+    if (conn != nullptr) {
+        try {
+            mysql_close(conn);
+        } catch (...) {
+            cerr << "Error closing connection, continuing with reconnect..." << endl;
+        }
+        conn = nullptr;
+    }
+    
+    conn = mysql_init(nullptr);
+    if (conn == nullptr) {
+        cerr << "MySQL re-initialization failed" << endl;
+        return false;
+    }
+    
+    // Enable auto-reconnect
+    bool auto_reconnect = true;
+    mysql_options(conn, MYSQL_OPT_RECONNECT, &auto_reconnect);
+    
+    // Set connection timeout
+    unsigned int timeout = 28800;
+    mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
+    mysql_options(conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
+    mysql_options(conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
+    
+    if (connectionConfig.empty()) {
+        cerr << "Connection configuration is empty" << endl;
+        return false;
+    }
+    
+    string host = connectionConfig.count("host") ? connectionConfig.at("host") : "localhost";
+    string user = connectionConfig.count("user") ? connectionConfig.at("user") : "root";
+    string password = connectionConfig.count("password") ? connectionConfig.at("password") : "";
+    string database = connectionConfig.count("database") ? connectionConfig.at("database") : "attendance_system";
+    int port = connectionConfig.count("port") ? stoi(connectionConfig.at("port")) : 3306;
+    
+    if (mysql_real_connect(conn, host.c_str(), user.c_str(), password.c_str(),
+                           database.c_str(), port, nullptr, 0) == nullptr) {
+        cerr << "Reconnection failed: " << mysql_error(conn) << endl;
+        mysql_close(conn);
+        conn = nullptr;
+        return false;
+    }
+    
+    cout << "Database reconnected successfully" << endl;
+    return true;
+}
+
+bool Database::ensureConnection() {
+    if (conn == nullptr) {
+        return reconnect();
+    }
+    
+    // Ping the connection to check if it's alive
+    if (mysql_ping(conn) != 0) {
+        cerr << "Connection lost, attempting to reconnect..." << endl;
+        return reconnect();
+    }
+    
+    return true;
+}
+
 string Database::escapeString(const string& str) {
+    // Return input unchanged if no connection (prevent segfault)
+    if (conn == nullptr) {
+        return str;
+    }
+    
     char* escaped = new char[str.length() * 2 + 1];
     mysql_real_escape_string(conn, escaped, str.c_str(), str.length());
     string result(escaped);
@@ -47,6 +126,11 @@ string Database::escapeString(const string& str) {
 
 // Authentication
 bool Database::authenticateAdmin(const string& email, const string& password) {
+    if (!ensureConnection()) {
+        cerr << "Database connection unavailable" << endl;
+        return false;
+    }
+    
     string query = "SELECT * FROM admins WHERE email='" + escapeString(email) + 
                        "' AND password='" + escapeString(password) + "'";
     
@@ -64,6 +148,11 @@ bool Database::authenticateAdmin(const string& email, const string& password) {
 
 map<string, string> Database::authenticateTeacher(const string& email, const string& password) {
     map<string, string> teacherData;
+    
+    if (!ensureConnection()) {
+        cerr << "Database connection unavailable" << endl;
+        return teacherData;
+    }
     
     string query = "SELECT teacher_id, name, teacher_type FROM teachers WHERE email='" + 
                        escapeString(email) + "' AND password='" + escapeString(password) + "'";
@@ -87,6 +176,8 @@ map<string, string> Database::authenticateTeacher(const string& email, const str
 
 // CRUD - Subjects
 int Database::createSubject(const string& name, int maxMarks) {
+    if (!ensureConnection()) return -1;
+    
     string query = "INSERT INTO subjects (name, max_marks) VALUES ('" + 
                        escapeString(name) + "', " + to_string(maxMarks) + ")";
     
@@ -100,6 +191,7 @@ int Database::createSubject(const string& name, int maxMarks) {
 
 vector<map<string, string>> Database::getAllSubjects() {
     vector<map<string, string>> subjects;
+    if (!ensureConnection()) return subjects;
     
     if (mysql_query(conn, "SELECT * FROM subjects")) {
         cerr << "Query failed: " << mysql_error(conn) << endl;
@@ -123,6 +215,7 @@ vector<map<string, string>> Database::getAllSubjects() {
 
 map<string, string> Database::getSubjectById(int id) {
     map<string, string> subject;
+    if (!ensureConnection()) return subject;
     
     string query = "SELECT * FROM subjects WHERE subject_id=" + to_string(id);
     
@@ -145,6 +238,8 @@ map<string, string> Database::getSubjectById(int id) {
 
 // CRUD - Classes
 int Database::createClass(const string& className) {
+    if (!ensureConnection()) return -1;
+    
     string query = "INSERT INTO classes (class_name) VALUES ('" + 
                        escapeString(className) + "')";
     
@@ -158,6 +253,7 @@ int Database::createClass(const string& className) {
 
 vector<map<string, string>> Database::getAllClasses() {
     vector<map<string, string>> classes;
+    if (!ensureConnection()) return classes;
     
     if (mysql_query(conn, "SELECT * FROM classes")) {
         cerr << "Query failed: " << mysql_error(conn) << endl;
@@ -180,6 +276,7 @@ vector<map<string, string>> Database::getAllClasses() {
 
 map<string, string> Database::getClassById(int id) {
     map<string, string> cls;
+    if (!ensureConnection()) return cls;
     
     string query = "SELECT * FROM classes WHERE class_id=" + to_string(id);
     
@@ -203,8 +300,10 @@ map<string, string> Database::getClassById(int id) {
 int Database::createTeacher(const string& name, const string& email, 
                            const string& password, double salary, 
                            const string& joinDate, const string& type) {
-    string query = "INSERT INTO teachers (name, email, password, salary, join_date, teacher_type) "
-                       "VALUES ('" + escapeString(name) + "', '" + escapeString(email) + "', '" + 
+    if (!ensureConnection()) return -1;
+    
+    string query = string("INSERT INTO teachers (name, email, password, salary, join_date, teacher_type) VALUES ('") +
+                       escapeString(name) + "', '" + escapeString(email) + "', '" +
                        escapeString(password) + "', " + to_string(salary) + ", '" + 
                        joinDate + "', '" + escapeString(type) + "')";
     
@@ -218,6 +317,7 @@ int Database::createTeacher(const string& name, const string& email,
 
 vector<map<string, string>> Database::getAllTeachers() {
     vector<map<string, string>> teachers;
+    if (!ensureConnection()) return teachers;
     
     if (mysql_query(conn, "SELECT * FROM teachers")) {
         cerr << "Query failed: " << mysql_error(conn) << endl;
@@ -244,6 +344,7 @@ vector<map<string, string>> Database::getAllTeachers() {
 
 map<string, string> Database::getTeacherById(int id) {
     map<string, string> teacher;
+    if (!ensureConnection()) return teacher;
     
     string query = "SELECT * FROM teachers WHERE teacher_id=" + to_string(id);
     
@@ -346,6 +447,8 @@ bool Database::assignSubjectTeacher(int teacherId, int subjectId, int classId) {
 
 // CRUD - Students
 int Database::createStudent(const string& name, int classId) {
+    if (!ensureConnection()) return -1;
+    
     string query = "INSERT INTO students (name, class_id) VALUES ('" + 
                        escapeString(name) + "', " + to_string(classId) + ")";
     
@@ -359,8 +462,9 @@ int Database::createStudent(const string& name, int classId) {
 
 vector<map<string, string>> Database::getAllStudents() {
     vector<map<string, string>> students;
+    if (!ensureConnection()) return students;
     
-    string query = "SELECT s.student_id, s.name, s.class_id, c.class_name "
+    string query = string("SELECT s.student_id, s.name, s.class_id, c.class_name ") +
                        "FROM students s LEFT JOIN classes c ON s.class_id = c.class_id";
     
     if (mysql_query(conn, query.c_str())) {
@@ -386,9 +490,10 @@ vector<map<string, string>> Database::getAllStudents() {
 
 map<string, string> Database::getStudentById(int id) {
     map<string, string> student;
+    if (!ensureConnection()) return student;
     
-    string query = "SELECT s.student_id, s.name, s.class_id, c.class_name "
-                       "FROM students s LEFT JOIN classes c ON s.class_id = c.class_id "
+    string query = string("SELECT s.student_id, s.name, s.class_id, c.class_name ") +
+                       "FROM students s LEFT JOIN classes c ON s.class_id = c.class_id " +
                        "WHERE s.student_id=" + to_string(id);
     
     if (mysql_query(conn, query.c_str())) {
@@ -411,6 +516,7 @@ map<string, string> Database::getStudentById(int id) {
 
 vector<map<string, string>> Database::getStudentsByClass(int classId) {
     vector<map<string, string>> students;
+    if (!ensureConnection()) return students;
     
     string query = "SELECT student_id, name, class_id FROM students WHERE class_id=" + 
                        to_string(classId);
@@ -438,6 +544,8 @@ vector<map<string, string>> Database::getStudentsByClass(int classId) {
 // Attendance operations
 bool Database::markAttendance(int studentId, int subjectId, int classId, 
                              const string& date, const string& status) {
+    if (!ensureConnection()) return false;
+    
     string query = "INSERT INTO attendance_records (student_id, subject_id, class_id, attendance_date, status) "
                        "VALUES (" + to_string(studentId) + ", " + to_string(subjectId) + ", " + 
                        to_string(classId) + ", '" + date + "', '" + escapeString(status) + "')";
@@ -452,6 +560,7 @@ bool Database::markAttendance(int studentId, int subjectId, int classId,
 
 vector<map<string, string>> Database::getStudentAttendance(int studentId) {
     vector<map<string, string>> records;
+    if (!ensureConnection()) return records;
     
     string query = "SELECT ar.attendance_date, s.name as subject_name, ar.status "
                        "FROM attendance_records ar "
@@ -481,6 +590,7 @@ vector<map<string, string>> Database::getStudentAttendance(int studentId) {
 
 vector<map<string, string>> Database::getClassAttendance(int classId) {
     vector<map<string, string>> records;
+    if (!ensureConnection()) return records;
     
     string query = "SELECT ar.attendance_date, st.name as student_name, s.name as subject_name, ar.status "
                        "FROM attendance_records ar "
@@ -511,6 +621,8 @@ vector<map<string, string>> Database::getClassAttendance(int classId) {
 }
 
 double Database::getAttendancePercentage(int studentId, int subjectId) {
+    if (!ensureConnection()) return 0.0;
+    
     string query = "SELECT COUNT(*) as total, "
                        "SUM(CASE WHEN status='Present' THEN 1 ELSE 0 END) as present "
                        "FROM attendance_records WHERE student_id=" + to_string(studentId);
@@ -542,6 +654,8 @@ double Database::getAttendancePercentage(int studentId, int subjectId) {
 }
 
 bool Database::addSubjectToClass(int classId, int subjectId) {
+    if (!ensureConnection()) return false;
+    
     string query = "INSERT INTO class_subjects (class_id, subject_id) VALUES (" + 
                        to_string(classId) + ", " + to_string(subjectId) + ")";
     
@@ -555,6 +669,7 @@ bool Database::addSubjectToClass(int classId, int subjectId) {
 
 vector<map<string, string>> Database::getClassSubjects(int classId) {
     vector<map<string, string>> subjects;
+    if (!ensureConnection()) return subjects;
     
     string query = "SELECT s.subject_id, s.name, s.max_marks "
                        "FROM class_subjects cs "
@@ -583,6 +698,8 @@ vector<map<string, string>> Database::getClassSubjects(int classId) {
 
 // Delete operations
 bool Database::deleteSubject(int subjectId) {
+    if (!ensureConnection()) return false;
+    
     string query = "DELETE FROM subjects WHERE subject_id=" + to_string(subjectId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -594,6 +711,8 @@ bool Database::deleteSubject(int subjectId) {
 }
 
 bool Database::deleteClass(int classId) {
+    if (!ensureConnection()) return false;
+    
     string query = "DELETE FROM classes WHERE class_id=" + to_string(classId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -605,6 +724,8 @@ bool Database::deleteClass(int classId) {
 }
 
 bool Database::deleteTeacher(int teacherId) {
+    if (!ensureConnection()) return false;
+    
     string query = "DELETE FROM teachers WHERE teacher_id=" + to_string(teacherId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -616,6 +737,8 @@ bool Database::deleteTeacher(int teacherId) {
 }
 
 bool Database::deleteStudent(int studentId) {
+    if (!ensureConnection()) return false;
+    
     string query = "DELETE FROM students WHERE student_id=" + to_string(studentId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -627,6 +750,8 @@ bool Database::deleteStudent(int studentId) {
 }
 
 bool Database::updateStudentName(int studentId, const string& newName) {
+    if (!ensureConnection()) return false;
+    
     string query = "UPDATE students SET name='" + escapeString(newName) + 
                    "' WHERE student_id=" + to_string(studentId);
     
@@ -640,6 +765,8 @@ bool Database::updateStudentName(int studentId, const string& newName) {
 
 // Validation operations
 bool Database::classExists(int classId) {
+    if (!ensureConnection()) return false;
+    
     string query = "SELECT class_id FROM classes WHERE class_id=" + to_string(classId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -654,6 +781,8 @@ bool Database::classExists(int classId) {
 }
 
 bool Database::subjectExists(int subjectId) {
+    if (!ensureConnection()) return false;
+    
     string query = "SELECT subject_id FROM subjects WHERE subject_id=" + to_string(subjectId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -668,6 +797,8 @@ bool Database::subjectExists(int subjectId) {
 }
 
 bool Database::teacherExists(int teacherId) {
+    if (!ensureConnection()) return false;
+    
     string query = "SELECT teacher_id FROM teachers WHERE teacher_id=" + to_string(teacherId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -682,6 +813,8 @@ bool Database::teacherExists(int teacherId) {
 }
 
 bool Database::studentExists(int studentId) {
+    if (!ensureConnection()) return false;
+    
     string query = "SELECT student_id FROM students WHERE student_id=" + to_string(studentId);
     
     if (mysql_query(conn, query.c_str())) {
@@ -696,6 +829,8 @@ bool Database::studentExists(int studentId) {
 }
 
 bool Database::isClassNameUnique(const string& className) {
+    if (!ensureConnection()) return true;
+    
     string query = "SELECT class_id FROM classes WHERE class_name='" + escapeString(className) + "'";
     
     if (mysql_query(conn, query.c_str())) {
@@ -710,6 +845,8 @@ bool Database::isClassNameUnique(const string& className) {
 }
 
 bool Database::isSubjectNameUnique(const string& subjectName) {
+    if (!ensureConnection()) return true;
+    
     string query = "SELECT subject_id FROM subjects WHERE name='" + escapeString(subjectName) + "'";
     
     if (mysql_query(conn, query.c_str())) {
@@ -724,6 +861,8 @@ bool Database::isSubjectNameUnique(const string& subjectName) {
 }
 
 bool Database::isAttendanceMarked(int studentId, int subjectId, const string& date) {
+    if (!ensureConnection()) return false;
+    
     string query = "SELECT attendance_id FROM attendance_records WHERE student_id=" + 
                    to_string(studentId) + " AND subject_id=" + to_string(subjectId) + 
                    " AND attendance_date='" + date + "'";
@@ -740,6 +879,8 @@ bool Database::isAttendanceMarked(int studentId, int subjectId, const string& da
 }
 
 bool Database::isSubjectInClass(int subjectId, int classId) {
+    if (!ensureConnection()) return false;
+    
     string query = "SELECT id FROM class_subjects WHERE class_id=" + to_string(classId) + 
                    " AND subject_id=" + to_string(subjectId);
     

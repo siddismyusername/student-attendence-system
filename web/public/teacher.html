@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="dashboard">
+            <div class="dashboard-header">
+                <h1>Teacher Dashboard</h1>
+                <div class="user-info">
+                    <p><strong>Name:</strong> <span id="teacher-name"></span></p>
+                    <p><strong>Type:</strong> <span id="teacher-type"></span></p>
+                    <p><strong>Class:</strong> <span id="teacher-class"></span></p>
+                    <p id="teacher-email"></p>
+                    <button class="logout-btn" onclick="logout()">Logout</button>
+                </div>
+            </div>
+
+            <div class="nav-menu">
+                <button class="active" onclick="showSection('mark-attendance')">Mark Attendance</button>
+                <button onclick="showSection('view-attendance')">View Attendance</button>
+                <button id="add-student-btn" style="display: none;" onclick="showSection('add-student')">Add Student</button>
+            </div>
+
+            <!-- Mark Attendance Section -->
+            <div id="mark-attendance-section" class="section active">
+                <div class="card">
+                    <h3>Mark Attendance</h3>
+                    <form id="attendance-form" onsubmit="prepareAttendance(event)">
+                        <div class="form-group">
+                            <label>Select Subject</label>
+                            <select id="attendance-subject" required onchange="loadStudentsForAttendance()"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Date</label>
+                            <input type="date" id="attendance-date" required>
+                        </div>
+                        <button type="submit" class="btn">Load Students</button>
+                    </form>
+                </div>
+                <div id="attendance-students" class="card" style="display: none;">
+                    <h3>Mark Student Attendance</h3>
+                    <div id="students-attendance-list"></div>
+                    <button class="btn" onclick="submitAttendance()">Submit Attendance</button>
+                </div>
+            </div>
+
+            <!-- View Attendance Section -->
+            <div id="view-attendance-section" class="section">
+                <div class="card">
+                    <h3>View Student Attendance</h3>
+                    <form id="view-attendance-form" onsubmit="viewStudentAttendance(event)">
+                        <div class="form-group">
+                            <label>Select Student</label>
+                            <select id="view-student" required></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Select Subject</label>
+                            <select id="view-subject" required></select>
+                        </div>
+                        <button type="submit" class="btn">View Attendance</button>
+                    </form>
+                </div>
+                <div id="attendance-records"></div>
+            </div>
+
+            <!-- Add Student Section (Class Teachers Only) -->
+            <div id="add-student-section" class="section">
+                <div class="card">
+                    <h3>Add Student to Class</h3>
+                    <form id="add-student-form" onsubmit="addStudentToClass(event)">
+                        <div class="form-group">
+                            <label>Select Student</label>
+                            <select id="add-student-select" required></select>
+                        </div>
+                        <button type="submit" class="btn">Add Student to My Class</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+        // Check authentication
+        const user = checkAuth();
+        if (!user || user.role !== 'teacher') {
+            window.location.href = 'index.html';
+        }
+
+        document.getElementById('teacher-name').textContent = user.name;
+        document.getElementById('teacher-type').textContent = user.type;
+        document.getElementById('teacher-class').textContent = user.classId > 0 ? 'Assigned' : 'Not Assigned';
+        document.getElementById('teacher-email').textContent = user.email;
+
+        // Show "Add Student" button only for Class Teachers
+        if (user.type === 'ClassTeacher' && user.classId > 0) {
+            document.getElementById('add-student-btn').style.display = 'block';
+        }
+
+        // Set today's date as default
+        document.getElementById('attendance-date').value = getCurrentDate();
+
+        let currentAttendanceData = [];
+
+        // Section Navigation
+        function showSection(section) {
+            document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.nav-menu button').forEach(b => b.classList.remove('active'));
+            
+            document.getElementById(section + '-section').classList.add('active');
+            event.target.classList.add('active');
+
+            // Load data for the section
+            switch(section) {
+                case 'mark-attendance': loadTeacherSubjects(); break;
+                case 'view-attendance': loadViewAttendanceData(); break;
+                case 'add-student': loadUnassignedStudents(); break;
+            }
+        }
+
+        // Load teacher's subjects
+        async function loadTeacherSubjects() {
+            const response = await API.getTeacherSubjects(user.teacherId);
+            
+            if (response.success) {
+                const subjects = response.data;
+                const options = subjects.map(s => 
+                    `<option value="${s.id}">${s.name}</option>`
+                ).join('');
+                document.getElementById('attendance-subject').innerHTML = '<option value="">Select Subject</option>' + options;
+            }
+        }
+
+        // Load students for marking attendance
+        async function loadStudentsForAttendance() {
+            // This will be called when preparing attendance
+        }
+
+        async function prepareAttendance(event) {
+            event.preventDefault();
+            
+            const subjectId = document.getElementById('attendance-subject').value;
+            const date = document.getElementById('attendance-date').value;
+
+            if (!subjectId) {
+                alert('Please select a subject');
+                return;
+            }
+
+            // Get class students
+            if (user.classId > 0) {
+                const response = await API.getClassStudents(user.classId);
+                
+                if (response.success) {
+                    const students = response.data;
+                    currentAttendanceData = students.map(s => ({
+                        studentId: s.id,
+                        studentName: s.name,
+                        subjectId: subjectId,
+                        date: date,
+                        status: 'Present'
+                    }));
+
+                    displayAttendanceForm();
+                } else {
+                    alert('Error loading students: ' + response.error);
+                }
+            }
+        }
+
+        function displayAttendanceForm() {
+            let html = '<table><thead><tr><th>Student Name</th><th>Status</th></tr></thead><tbody>';
+            
+            currentAttendanceData.forEach((record, index) => {
+                html += `<tr>
+                    <td>${record.studentName || '-'}</td>
+                    <td>
+                        <select id="status-${index}" class="attendance-status">
+                            <option value="Present" selected>Present</option>
+                            <option value="Absent">Absent</option>
+                            <option value="Late">Late</option>
+                        </select>
+                    </td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+            document.getElementById('students-attendance-list').innerHTML = html;
+            document.getElementById('attendance-students').style.display = 'block';
+        }
+
+        async function submitAttendance() {
+            // Update statuses from dropdowns
+            currentAttendanceData.forEach((record, index) => {
+                const statusSelect = document.getElementById(`status-${index}`);
+                if (statusSelect) {
+                    record.status = statusSelect.value;
+                }
+            });
+
+            // Submit each attendance record
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const record of currentAttendanceData) {
+                const response = await API.markAttendance(
+                    record.studentId,
+                    record.subjectId,
+                    record.date,
+                    record.status
+                );
+
+                if (response.success) {
+                    successCount++;
+                } else {
+                    errorCount++;
+                }
+            }
+
+            if (errorCount === 0) {
+                alert(`Attendance marked successfully for ${successCount} students!`);
+                document.getElementById('attendance-form').reset();
+                document.getElementById('attendance-students').style.display = 'none';
+                document.getElementById('attendance-date').value = getCurrentDate();
+            } else {
+                alert(`Attendance marked for ${successCount} students. ${errorCount} failed.`);
+            }
+        }
+
+        // View Attendance Functions
+        async function loadViewAttendanceData() {
+            const [students, subjects] = await Promise.all([
+                user.classId > 0 ? API.getClassStudents(user.classId) : API.getStudents(),
+                API.getTeacherSubjects(user.teacherId)
+            ]);
+
+            if (students.success) {
+                const studentOptions = students.data.map(s => 
+                    `<option value="${s.id}">${s.name}</option>`
+                ).join('');
+                document.getElementById('view-student').innerHTML = '<option value="">Select Student</option>' + studentOptions;
+            }
+
+            if (subjects.success) {
+                const subjectOptions = subjects.data.map(s => 
+                    `<option value="${s.id}">${s.name}</option>`
+                ).join('');
+                document.getElementById('view-subject').innerHTML = '<option value="">Select Subject</option>' + subjectOptions;
+            }
+        }
+
+        async function viewStudentAttendance(event) {
+            event.preventDefault();
+            
+            const studentId = document.getElementById('view-student').value;
+            const subjectId = document.getElementById('view-subject').value;
+
+            showLoading('attendance-records');
+
+            const [attendanceResp, percentageResp] = await Promise.all([
+                API.getStudentAttendance(studentId, subjectId),
+                API.getSubjectAttendancePercentage(studentId, subjectId)
+            ]);
+
+            if (attendanceResp.success) {
+                const records = attendanceResp.data;
+                const percentage = percentageResp.success ? percentageResp.data.percentage : 0;
+
+                let html = `<div class="card">
+                    <h3>Attendance Records</h3>
+                    <p><strong>Attendance Percentage:</strong> ${percentage.toFixed(2)}%</p>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+
+                if (records.length === 0) {
+                    html += '<tr><td colspan="2">No attendance records found</td></tr>';
+                } else {
+                    records.forEach(record => {
+                        html += `<tr>
+                            <td>${formatDate(record.date)}</td>
+                            <td class="${getAttendanceStatusClass(record.status)}">${record.status}</td>
+                        </tr>`;
+                    });
+                }
+
+                html += '</tbody></table></div>';
+                document.getElementById('attendance-records').innerHTML = html;
+            } else {
+                showError('attendance-records', attendanceResp.error);
+            }
+        }
+
+        // Add Student to Class (Class Teachers Only)
+        async function loadUnassignedStudents() {
+            const response = await API.getStudents();
+            
+            if (response.success) {
+                const students = response.data.filter(s => !s.classId || s.classId === '0' || s.classId === 0);
+                const options = students.map(s => 
+                    `<option value="${s.id}">${s.name}</option>`
+                ).join('');
+                document.getElementById('add-student-select').innerHTML = '<option value="">Select Student</option>' + options;
+            }
+        }
+
+        async function addStudentToClass(event) {
+            event.preventDefault();
+            
+            const studentId = document.getElementById('add-student-select').value;
+
+            const response = await API.assignStudentToClass(studentId, user.classId);
+            if (response.success) {
+                alert('Student added to class successfully!');
+                document.getElementById('add-student-form').reset();
+                loadUnassignedStudents();
+            } else {
+                alert('Error: ' + response.error);
+            }
+        }
+
+        // Initial load
+        loadTeacherSubjects();
+    </script>
+</body>
+</html>
