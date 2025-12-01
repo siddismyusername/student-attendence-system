@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Teacher Dashboard</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
+
 <body>
     <div class="container">
         <div class="dashboard">
@@ -23,7 +25,8 @@
             <div class="nav-menu">
                 <button class="active" onclick="showSection('mark-attendance')">Mark Attendance</button>
                 <button onclick="showSection('view-attendance')">View Attendance</button>
-                <button id="add-student-btn" style="display: none;" onclick="showSection('add-student')">Add Student</button>
+                <button id="add-student-btn" style="display: none;" onclick="showSection('add-student')">Add
+                    Student</button>
             </div>
 
             <!-- Mark Attendance Section -->
@@ -111,12 +114,12 @@
         function showSection(section) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
             document.querySelectorAll('.nav-menu button').forEach(b => b.classList.remove('active'));
-            
+
             document.getElementById(section + '-section').classList.add('active');
             event.target.classList.add('active');
 
             // Load data for the section
-            switch(section) {
+            switch (section) {
                 case 'mark-attendance': loadTeacherSubjects(); break;
                 case 'view-attendance': loadViewAttendanceData(); break;
                 case 'add-student': loadUnassignedStudents(); break;
@@ -126,11 +129,11 @@
         // Load teacher's subjects
         async function loadTeacherSubjects() {
             const response = await API.getTeacherSubjects(user.teacherId);
-            
+
             if (response.success) {
                 const subjects = response.data;
-                const options = subjects.map(s => 
-                    `<option value="${s.id}">${s.name}</option>`
+                const options = subjects.map(s =>
+                    `<option value="${s.id}" data-class-id="${s.classId}">${s.name} (${s.className})</option>`
                 ).join('');
                 document.getElementById('attendance-subject').innerHTML = '<option value="">Select Subject</option>' + options;
             }
@@ -143,7 +146,7 @@
 
         async function prepareAttendance(event) {
             event.preventDefault();
-            
+
             const subjectId = document.getElementById('attendance-subject').value;
             const date = document.getElementById('attendance-date').value;
 
@@ -153,9 +156,12 @@
             }
 
             // Get class students
-            if (user.classId > 0) {
-                const response = await API.getClassStudents(user.classId);
-                
+            const selectedOption = document.getElementById('attendance-subject').selectedOptions[0];
+            const classId = selectedOption.getAttribute('data-class-id');
+
+            if (classId && classId > 0) {
+                const response = await API.getClassStudents(classId);
+
                 if (response.success) {
                     const students = response.data;
                     currentAttendanceData = students.map(s => ({
@@ -175,7 +181,7 @@
 
         function displayAttendanceForm() {
             let html = '<table><thead><tr><th>Student Name</th><th>Status</th></tr></thead><tbody>';
-            
+
             currentAttendanceData.forEach((record, index) => {
                 html += `<tr>
                     <td>${record.studentName || '-'}</td>
@@ -188,7 +194,7 @@
                     </td>
                 </tr>`;
             });
-            
+
             html += '</tbody></table>';
             document.getElementById('students-attendance-list').innerHTML = html;
             document.getElementById('attendance-students').style.display = 'block';
@@ -240,14 +246,14 @@
             ]);
 
             if (students.success) {
-                const studentOptions = students.data.map(s => 
+                const studentOptions = students.data.map(s =>
                     `<option value="${s.id}">${s.name}</option>`
                 ).join('');
                 document.getElementById('view-student').innerHTML = '<option value="">Select Student</option>' + studentOptions;
             }
 
             if (subjects.success) {
-                const subjectOptions = subjects.data.map(s => 
+                const subjectOptions = subjects.data.map(s =>
                     `<option value="${s.id}">${s.name}</option>`
                 ).join('');
                 document.getElementById('view-subject').innerHTML = '<option value="">Select Subject</option>' + subjectOptions;
@@ -256,7 +262,7 @@
 
         async function viewStudentAttendance(event) {
             event.preventDefault();
-            
+
             const studentId = document.getElementById('view-student').value;
             const subjectId = document.getElementById('view-subject').value;
 
@@ -304,10 +310,10 @@
         // Add Student to Class (Class Teachers Only)
         async function loadUnassignedStudents() {
             const response = await API.getStudents();
-            
+
             if (response.success) {
                 const students = response.data.filter(s => !s.classId || s.classId === '0' || s.classId === 0);
-                const options = students.map(s => 
+                const options = students.map(s =>
                     `<option value="${s.id}">${s.name}</option>`
                 ).join('');
                 document.getElementById('add-student-select').innerHTML = '<option value="">Select Student</option>' + options;
@@ -316,7 +322,7 @@
 
         async function addStudentToClass(event) {
             event.preventDefault();
-            
+
             const studentId = document.getElementById('add-student-select').value;
 
             const response = await API.assignStudentToClass(studentId, user.classId);
@@ -333,4 +339,5 @@
         loadTeacherSubjects();
     </script>
 </body>
+
 </html>

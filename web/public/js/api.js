@@ -1,11 +1,11 @@
 // API Base URL
-const API_BASE_URL = 'http://localhost:8080/api';
+const API_BASE_URL = '/api';
 
 // API Helper Class
 class API {
     // Authentication
-    static async login(role, email, password) {
-        return await this.post(`/login/${role}`, { email, password });
+    static async login(role, identifier, password) {
+        return await this.post(`/login/${role}`, { email: identifier, password });
     }
 
     // Subjects
@@ -51,8 +51,8 @@ class API {
         return await this.get('/teachers');
     }
 
-    static async createTeacher(name, email, password) {
-        return await this.post('/teachers', { name, email, password });
+    static async createTeacher(name, email, password, type) {
+        return await this.post('/teachers', { name, email, password, type });
     }
 
     static async deleteTeacher(id) {
@@ -63,8 +63,8 @@ class API {
         return await this.post(`/teachers/${teacherId}/assign-class`, { classId });
     }
 
-    static async assignSubjectTeacher(teacherId, subjectId) {
-        return await this.post(`/teachers/${teacherId}/assign-subject`, { subjectId });
+    static async assignSubjectTeacher(teacherId, subjectId, classId) {
+        return await this.post(`/teachers/${teacherId}/assign-subject`, { subjectId, classId });
     }
 
     static async getTeacherSubjects(teacherId) {
@@ -200,10 +200,10 @@ function getCurrentDate() {
 
 function formatDate(dateString) {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric' 
+    return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
     });
 }
 

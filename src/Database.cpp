@@ -13,10 +13,6 @@ Database::Database(const map<string, string>& config) : connectionConfig(config)
         return;
     }
     
-    // Enable auto-reconnect
-    bool auto_reconnect = true;
-    mysql_options(conn, MYSQL_OPT_RECONNECT, &auto_reconnect);
-    
     // Set connection timeout
     unsigned int timeout = 28800; // 8 hours
     mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
@@ -48,13 +44,9 @@ bool Database::isConnected() const {
 }
 
 bool Database::reconnect() {
-    // Close existing connection only if it's valid
+    // Close existing connection if it exists
     if (conn != nullptr) {
-        try {
-            mysql_close(conn);
-        } catch (...) {
-            cerr << "Error closing connection, continuing with reconnect..." << endl;
-        }
+        mysql_close(conn);
         conn = nullptr;
     }
     
@@ -64,10 +56,6 @@ bool Database::reconnect() {
         return false;
     }
     
-    // Enable auto-reconnect
-    bool auto_reconnect = true;
-    mysql_options(conn, MYSQL_OPT_RECONNECT, &auto_reconnect);
-    
     // Set connection timeout
     unsigned int timeout = 28800;
     mysql_options(conn, MYSQL_OPT_CONNECT_TIMEOUT, &timeout);
@@ -76,6 +64,8 @@ bool Database::reconnect() {
     
     if (connectionConfig.empty()) {
         cerr << "Connection configuration is empty" << endl;
+        mysql_close(conn);
+        conn = nullptr;
         return false;
     }
     
@@ -87,7 +77,8 @@ bool Database::reconnect() {
     
     if (mysql_real_connect(conn, host.c_str(), user.c_str(), password.c_str(),
                            database.c_str(), port, nullptr, 0) == nullptr) {
-        cerr << "Reconnection failed: " << mysql_error(conn) << endl;
+        string error = mysql_error(conn);
+        cerr << "Reconnection failed: " << error << endl;
         mysql_close(conn);
         conn = nullptr;
         return false;
@@ -104,7 +95,7 @@ bool Database::ensureConnection() {
     
     // Ping the connection to check if it's alive
     if (mysql_ping(conn) != 0) {
-        cerr << "Connection lost, attempting to reconnect..." << endl;
+        cerr << "Connection lost (ping failed), attempting to reconnect..." << endl;
         return reconnect();
     }
     
@@ -165,9 +156,10 @@ map<string, string> Database::authenticateTeacher(const string& email, const str
     MYSQL_RES* result = mysql_store_result(conn);
     if (mysql_num_rows(result) > 0) {
         MYSQL_ROW row = mysql_fetch_row(result);
-        teacherData["teacher_id"] = row[0] ? row[0] : "";
+        teacherData["id"] = row[0] ? row[0] : "";
         teacherData["name"] = row[1] ? row[1] : "";
-        teacherData["teacher_type"] = row[2] ? row[2] : "";
+        teacherData["email"] = email; // Pass back the email used for login
+        teacherData["type"] = row[2] ? row[2] : "";
     }
     mysql_free_result(result);
     
@@ -339,6 +331,46 @@ vector<map<string, string>> Database::getAllTeachers() {
     }
     
     mysql_free_result(result);
+    mysql_free_result(result);
+    return teachers;
+}
+
+vector<map<string, string>> Database::getAllTeachersWithDetails() {
+    vector<map<string, string>> teachers;
+    if (!ensureConnection()) return teachers;
+    
+    // Optimized query to fetch teacher details AND their class assignment in one go
+    string query = "SELECT t.teacher_id, t.name, t.email, t.salary, t.join_date, t.teacher_type, "
+                   "c.class_id, c.class_name "
+                   "FROM teachers t "
+                   "LEFT JOIN teacher_class_assignments tca ON t.teacher_id = tca.teacher_id "
+                   "LEFT JOIN classes c ON tca.class_id = c.class_id";
+    
+    if (mysql_query(conn, query.c_str())) {
+        cerr << "Query failed: " << mysql_error(conn) << endl;
+        return teachers;
+    }
+    
+    MYSQL_RES* result = mysql_store_result(conn);
+    MYSQL_ROW row;
+    
+    while ((row = mysql_fetch_row(result))) {
+        map<string, string> teacher;
+        teacher["teacher_id"] = row[0] ? row[0] : "";
+        teacher["name"] = row[1] ? row[1] : "";
+        teacher["email"] = row[2] ? row[2] : "";
+        teacher["salary"] = row[3] ? row[3] : "";
+        teacher["join_date"] = row[4] ? row[4] : "";
+        teacher["teacher_type"] = row[5] ? row[5] : "";
+        
+        // Class info from JOIN
+        teacher["class_id"] = row[6] ? row[6] : "";
+        teacher["class_name"] = row[7] ? row[7] : "";
+        
+        teachers.push_back(teacher);
+    }
+    
+    mysql_free_result(result);
     return teachers;
 }
 
@@ -450,7 +482,7 @@ int Database::createStudent(const string& name, int classId) {
     if (!ensureConnection()) return -1;
     
     string query = "INSERT INTO students (name, class_id) VALUES ('" + 
-                       escapeString(name) + "', " + to_string(classId) + ")";
+                       escapeString(name) + "', " + (classId > 0 ? to_string(classId) : "NULL") + ")";
     
     if (mysql_query(conn, query.c_str())) {
         cerr << "Insert failed: " << mysql_error(conn) << endl;
@@ -562,7 +594,7 @@ vector<map<string, string>> Database::getStudentAttendance(int studentId) {
     vector<map<string, string>> records;
     if (!ensureConnection()) return records;
     
-    string query = "SELECT ar.attendance_date, s.name as subject_name, ar.status "
+    string query = "SELECT ar.attendance_date, s.name as subject_name, ar.status, ar.subject_id "
                        "FROM attendance_records ar "
                        "JOIN subjects s ON ar.subject_id = s.subject_id "
                        "WHERE ar.student_id=" + to_string(studentId) + 
@@ -581,6 +613,7 @@ vector<map<string, string>> Database::getStudentAttendance(int studentId) {
         record["date"] = row[0] ? row[0] : "";
         record["subject"] = row[1] ? row[1] : "";
         record["status"] = row[2] ? row[2] : "";
+        record["subject_id"] = row[3] ? row[3] : "";
         records.push_back(record);
     }
     

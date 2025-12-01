@@ -42,6 +42,7 @@ public:
                      const string& password, double salary, 
                      const string& joinDate, const string& type);
     vector<map<string, string>> getAllTeachers();
+    std::vector<std::map<std::string, std::string>> getAllTeachersWithDetails(); // Optimized fetch
     map<string, string> getTeacherById(int id);
     map<string, string> getTeacherClassAssignment(int teacherId);
     vector<map<string, string>> getTeacherSubjectAssignments(int teacherId);

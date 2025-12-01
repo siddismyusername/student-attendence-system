@@ -6,12 +6,34 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <mutex>
+#include <filesystem>
 
 using json = nlohmann::json;
 using namespace std;
 
 // Global database instance
 Database* db = nullptr;
+// Mutex to protect database access from multiple threads
+mutex db_mutex;
+
+// Thread-safe database call wrapper
+#define DB_CALL(call) ({ \
+    lock_guard<mutex> lock(db_mutex); \
+    call; \
+})
+
+// Helper to read integer fields that may be sent as strings
+static int getIntField(const json& j, const string& key, int defaultVal = 0) {
+    if (!j.contains(key)) return defaultVal;
+    const auto& v = j.at(key);
+    if (v.is_number_integer()) return v.get<int>();
+    if (v.is_number_unsigned()) return static_cast<int>(v.get<unsigned int>());
+    if (v.is_string()) {
+        try { return stoi(v.get<string>()); } catch (...) { return defaultVal; }
+    }
+    return defaultVal;
+}
 
 // Helper function to create error response
 json errorResponse(const string& message) {
@@ -34,17 +56,18 @@ json mapVectorToJson(const vector<map<string, string>>& vec) {
     for (const auto& m : vec) {
         json obj;
         for (const auto& pair : m) {
-            // Normalize ID field names to 'id' and skip the original
+            // Normalize ID field names to 'id'
             if (pair.first == "subject_id" || pair.first == "class_id" || 
                 pair.first == "teacher_id" || pair.first == "student_id") {
                 obj["id"] = pair.second;
-            } else if (pair.first != "class_name" || obj.find("name") == obj.end()) {
-                // For classes, prefer class_name as name
-                if (pair.first == "class_name") {
-                    obj["name"] = pair.second;
-                } else {
-                    obj[pair.first] = pair.second;
-                }
+            } 
+            // Normalize class_name to name
+            else if (pair.first == "class_name") {
+                obj["name"] = pair.second;
+            } 
+            // Add all other fields as-is
+            else {
+                obj[pair.first] = pair.second;
             }
         }
         arr.push_back(obj);
@@ -65,7 +88,7 @@ void setupAuthEndpoints(httplib::Server& svr) {
             string email = body["email"];
             string password = body["password"];
             
-            if (db->authenticateAdmin(email, password)) {
+            if (DB_CALL(db->authenticateAdmin(email, password))) {
                 res.set_content(successResponse({{"role", "admin"}, {"email", email}}).dump(), "application/json");
             } else {
                 res.set_content(errorResponse("Invalid credentials").dump(), "application/json");
@@ -86,7 +109,7 @@ void setupAuthEndpoints(httplib::Server& svr) {
             string email = body["email"];
             string password = body["password"];
             
-            auto teacherData = db->authenticateTeacher(email, password);
+            auto teacherData = DB_CALL(db->authenticateTeacher(email, password));
             if (!teacherData.empty() && teacherData.count("id") && teacherData["id"] != "0") {
                 json data = {
                     {"role", "teacher"},
@@ -97,7 +120,7 @@ void setupAuthEndpoints(httplib::Server& svr) {
                 };
                 
                 // Get class assignment if exists
-                auto classAssignment = db->getTeacherClassAssignment(stoi(teacherData["id"]));
+                auto classAssignment = DB_CALL(db->getTeacherClassAssignment(stoi(teacherData["id"])));
                 if (!classAssignment.empty() && classAssignment.count("class_id")) {
                     data["classId"] = stoi(classAssignment["class_id"]);
                 } else {
@@ -113,49 +136,47 @@ void setupAuthEndpoints(httplib::Server& svr) {
         }
     });
 
-    // Student login - using name as identifier (simplified for demo)
+    // Student login - using ID
     svr.Post("/api/login/student", [](const httplib::Request& req, httplib::Response& res) {
         try {
             auto body = json::parse(req.body);
+            // Frontend sends ID in 'email' field for compatibility with generic login function
             if (!body.contains("email")) {
-                res.set_content(errorResponse("Missing email").dump(), "application/json");
+                res.set_content(errorResponse("Missing Student ID").dump(), "application/json");
                 return;
             }
-            string email = body["email"];
             
-            auto students = db->getAllStudents();
-            bool found = false;
-            json data;
-            
-            for (const auto& studentMap : students) {
-                if (studentMap.count("name") && studentMap.at("name") == email) {
-                    if (!studentMap.count("id")) continue;
-                    
-                    data = {
-                        {"role", "student"},
-                        {"studentId", stoi(studentMap.at("id"))},
-                        {"name", studentMap.at("name")},
-                        {"email", email}
-                    };
-                    
-                    if (studentMap.find("class_id") != studentMap.end() && !studentMap.at("class_id").empty()) {
-                        int classId = stoi(studentMap.at("class_id"));
-                        data["classId"] = classId;
-                        auto classInfo = db->getClassById(classId);
-                        data["className"] = (classInfo.count("name") && !classInfo["name"].empty()) ? classInfo["name"] : "Unknown";
-                    } else {
-                        data["classId"] = 0;
-                        data["className"] = "Not Assigned";
-                    }
-                    found = true;
-                    break;
-                }
+            string idStr = body["email"];
+            int studentId = 0;
+            try {
+                studentId = stoi(idStr);
+            } catch (...) {
+                res.set_content(errorResponse("Invalid Student ID format").dump(), "application/json");
+                return;
             }
             
-            if (found) {
+            auto studentMap = DB_CALL(db->getStudentById(studentId));
+            
+            if (!studentMap.empty() && studentMap.count("student_id")) {
+                json data = {
+                    {"role", "student"},
+                    {"studentId", stoi(studentMap.at("student_id"))},
+                    {"name", studentMap.at("name")},
+                    {"email", idStr} // Echo back ID as email
+                };
+                
+                if (studentMap.find("class_id") != studentMap.end() && !studentMap.at("class_id").empty()) {
+                    int classId = stoi(studentMap.at("class_id"));
+                    data["classId"] = classId;
+                    data["className"] = studentMap.count("class_name") ? studentMap.at("class_name") : "Unknown";
+                } else {
+                    data["classId"] = 0;
+                    data["className"] = "Not Assigned";
+                }
+                
                 res.set_content(successResponse(data).dump(), "application/json");
             } else {
-                res.set_content(errorResponse("Invalid credentials").dump(), "application/json");
+                res.set_content(errorResponse("Student not found").dump(), "application/json");
             }
         } catch (const exception& e) {
             res.set_content(errorResponse(string("Invalid request: ") + e.what()).dump(), "application/json");
@@ -167,7 +188,7 @@ void setupAuthEndpoints(httplib::Server& svr) {
 void setupSubjectEndpoints(httplib::Server& svr) {
     // Get all subjects
     svr.Get("/api/subjects", [](const httplib::Request& req, httplib::Response& res) {
-        auto subjects = db->getAllSubjects();
+        auto subjects = DB_CALL(db->getAllSubjects());
         res.set_content(successResponse(mapVectorToJson(subjects)).dump(), "application/json");
     });
 
@@ -176,7 +197,7 @@ void setupSubjectEndpoints(httplib::Server& svr) {
         auto body = json::parse(req.body);
         string name = body["name"];
         
-        if (db->createSubject(name, 100)) {
+        if (DB_CALL(db->createSubject(name, 100))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to create subject").dump(), "application/json");
@@ -187,7 +208,7 @@ void setupSubjectEndpoints(httplib::Server& svr) {
     svr.Delete("/api/subjects/(\\d+)", [](const httplib::Request& req, httplib::Response& res) {
         int subjectId = stoi(req.matches[1]);
         
-        if (db->deleteSubject(subjectId)) {
+        if (DB_CALL(db->deleteSubject(subjectId))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to delete subject").dump(), "application/json");
@@ -199,7 +220,7 @@ void setupSubjectEndpoints(httplib::Server& svr) {
 void setupClassEndpoints(httplib::Server& svr) {
     // Get all classes
     svr.Get("/api/classes", [](const httplib::Request& req, httplib::Response& res) {
-        auto classes = db->getAllClasses();
+        auto classes = DB_CALL(db->getAllClasses());
         res.set_content(successResponse(mapVectorToJson(classes)).dump(), "application/json");
     });
 
@@ -208,7 +229,7 @@ void setupClassEndpoints(httplib::Server& svr) {
         auto body = json::parse(req.body);
         string name = body["name"];
         
-        if (db->createClass(name)) {
+        if (DB_CALL(db->createClass(name))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to create class").dump(), "application/json");
@@ -219,7 +240,7 @@ void setupClassEndpoints(httplib::Server& svr) {
     svr.Delete("/api/classes/(\\d+)", [](const httplib::Request& req, httplib::Response& res) {
         int classId = stoi(req.matches[1]);
         
-        if (db->deleteClass(classId)) {
+        if (DB_CALL(db->deleteClass(classId))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to delete class").dump(), "application/json");
@@ -229,7 +250,7 @@ void setupClassEndpoints(httplib::Server& svr) {
     // Get subjects for a class
     svr.Get("/api/classes/(\\d+)/subjects", [](const httplib::Request& req, httplib::Response& res) {
         int classId = stoi(req.matches[1]);
-        auto subjects = db->getClassSubjects(classId);
+        auto subjects = DB_CALL(db->getClassSubjects(classId));
         res.set_content(successResponse(mapVectorToJson(subjects)).dump(), "application/json");
     });
 
@@ -237,9 +258,9 @@ void setupClassEndpoints(httplib::Server& svr) {
     svr.Post("/api/classes/(\\d+)/subjects", [](const httplib::Request& req, httplib::Response& res) {
         int classId = stoi(req.matches[1]);
         auto body = json::parse(req.body);
-        int subjectId = body["subjectId"];
+        int subjectId = getIntField(body, "subjectId", 0);
         
-        if (db->addSubjectToClass(classId, subjectId)) {
+        if (DB_CALL(db->addSubjectToClass(classId, subjectId))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to add subject to class").dump(), "application/json");
@@ -249,17 +270,17 @@ void setupClassEndpoints(httplib::Server& svr) {
     // Get students in a class
     svr.Get("/api/classes/(\\d+)/students", [](const httplib::Request& req, httplib::Response& res) {
         int classId = stoi(req.matches[1]);
-        auto students = db->getStudentsByClass(classId);
+        auto students = DB_CALL(db->getStudentsByClass(classId));
         res.set_content(successResponse(mapVectorToJson(students)).dump(), "application/json");
     });
 }
 
 // Teacher endpoints
 void setupTeacherEndpoints(httplib::Server& svr) {
-    // Get all teachers
+    // Get all teachers (Optimized)
     svr.Get("/api/teachers", [](const httplib::Request& req, httplib::Response& res) {
         try {
-            auto teachers = db->getAllTeachers();
+            auto teachers = DB_CALL(db->getAllTeachersWithDetails());
             json result = json::array();
             
             for (const auto& teacherMap : teachers) {
@@ -272,24 +293,18 @@ void setupTeacherEndpoints(httplib::Server& svr) {
                 teacher["name"] = teacherMap.at("name");
                 teacher["email"] = teacherMap.count("email") ? teacherMap.at("email") : "";
                 teacher["type"] = teacherMap.count("teacher_type") ? teacherMap.at("teacher_type") : "Teacher";
-            
-            if (teacherMap.find("salary") != teacherMap.end()) {
-                teacher["salary"] = teacherMap.at("salary");
-            }
-            if (teacherMap.find("join_date") != teacherMap.end()) {
-                teacher["joinDate"] = teacherMap.at("join_date");
-            }
                 
-                int teacherId = stoi(teacherMap.at("teacher_id"));
-                auto classAssignment = db->getTeacherClassAssignment(teacherId);
-                if (!classAssignment.empty() && classAssignment.count("class_id")) {
-                    teacher["classId"] = stoi(classAssignment["class_id"]);
-                    auto classInfo = db->getClassById(stoi(classAssignment["class_id"]));
-                    if (!classInfo.empty() && classInfo.find("class_name") != classInfo.end()) {
-                        teacher["className"] = classInfo["class_name"];
-                    } else {
-                        teacher["className"] = "Unknown";
-                    }
+                if (teacherMap.find("salary") != teacherMap.end()) {
+                    teacher["salary"] = teacherMap.at("salary");
+                }
+                if (teacherMap.find("join_date") != teacherMap.end()) {
+                    teacher["joinDate"] = teacherMap.at("join_date");
+                }
+                
+                // Class info is now already in the map from the JOIN
+                if (teacherMap.count("class_id") && !teacherMap.at("class_id").empty()) {
+                    teacher["classId"] = stoi(teacherMap.at("class_id"));
+                    teacher["className"] = teacherMap.count("class_name") ? teacherMap.at("class_name") : "Unknown";
                 } else {
                     teacher["classId"] = 0;
                     teacher["className"] = "Not Assigned";
@@ -300,7 +315,7 @@ void setupTeacherEndpoints(httplib::Server& svr) {
             
             res.set_content(successResponse(result).dump(), "application/json");
         } catch (const exception& e) {
-            res.set_content(errorResponse(string("Error loading teachers: ") + e.what()).dump(), "application/json");
+            res.set_content(errorResponse(string("Internal Error: ") + e.what()).dump(), "application/json");
         }
     });
 
@@ -310,8 +325,9 @@ void setupTeacherEndpoints(httplib::Server& svr) {
         string name = body["name"];
         string email = body["email"];
         string password = body["password"];
+        string type = body.contains("type") ? body["type"] : "Teacher";
         
-        if (db->createTeacher(name, email, password, 50000.0, "2025-12-01", "Teacher")) {
+        if (DB_CALL(db->createTeacher(name, email, password, 50000.0, "2025-12-01", type))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to create teacher").dump(), "application/json");
@@ -322,7 +338,7 @@ void setupTeacherEndpoints(httplib::Server& svr) {
     svr.Delete("/api/teachers/(\\d+)", [](const httplib::Request& req, httplib::Response& res) {
         int teacherId = stoi(req.matches[1]);
         
-        if (db->deleteTeacher(teacherId)) {
+        if (DB_CALL(db->deleteTeacher(teacherId))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to delete teacher").dump(), "application/json");
@@ -333,9 +349,9 @@ void setupTeacherEndpoints(httplib::Server& svr) {
     svr.Post("/api/teachers/(\\d+)/assign-class", [](const httplib::Request& req, httplib::Response& res) {
         int teacherId = stoi(req.matches[1]);
         auto body = json::parse(req.body);
-        int classId = body["classId"];
+        int classId = getIntField(body, "classId", 0);
         
-        if (db->assignClassTeacher(classId, teacherId)) {
+        if (DB_CALL(db->assignClassTeacher(classId, teacherId))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to assign class teacher").dump(), "application/json");
@@ -346,26 +362,45 @@ void setupTeacherEndpoints(httplib::Server& svr) {
     svr.Post("/api/teachers/(\\d+)/assign-subject", [](const httplib::Request& req, httplib::Response& res) {
         int teacherId = stoi(req.matches[1]);
         auto body = json::parse(req.body);
-        int subjectId = body["subjectId"];
+        int subjectId = getIntField(body, "subjectId", 0);
+        int classId = getIntField(body, "classId", 0);
         
-        auto classAssignment = db->getTeacherClassAssignment(teacherId);
-        int classId = 0;
-        if (!classAssignment.empty()) {
-            classId = stoi(classAssignment["class_id"]);
+        if (classId == 0) {
+            // Fallback: try to get class from teacher's class assignment
+            auto classAssignment = DB_CALL(db->getTeacherClassAssignment(teacherId));
+            if (!classAssignment.empty()) {
+                classId = stoi(classAssignment["class_id"]);
+            }
         }
         
-        if (classId > 0 && db->assignSubjectTeacher(teacherId, subjectId, classId)) {
+        if (classId == 0) {
+            res.set_content(errorResponse("Class ID is missing. Please select a class.").dump(), "application/json");
+            return;
+        }
+        
+        if (DB_CALL(db->assignSubjectTeacher(teacherId, subjectId, classId))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
-            res.set_content(errorResponse("Teacher must be assigned to a class first").dump(), "application/json");
+            res.set_content(errorResponse("Failed to assign subject teacher. This assignment might already exist.").dump(), "application/json");
         }
     });
 
     // Get teacher's assigned subjects
     svr.Get("/api/teachers/(\\d+)/subjects", [](const httplib::Request& req, httplib::Response& res) {
         int teacherId = stoi(req.matches[1]);
-        auto subjects = db->getTeacherSubjectAssignments(teacherId);
-        res.set_content(successResponse(mapVectorToJson(subjects)).dump(), "application/json");
+        auto subjects = DB_CALL(db->getTeacherSubjectAssignments(teacherId));
+        
+        json result = json::array();
+        for (const auto& s : subjects) {
+            json subject;
+            subject["id"] = s.count("subject_id") ? s.at("subject_id") : "0";
+            subject["name"] = s.count("subject_name") ? s.at("subject_name") : "Unknown";
+            subject["classId"] = s.count("class_id") ? s.at("class_id") : "0";
+            subject["className"] = s.count("class_name") ? s.at("class_name") : "Unknown";
+            result.push_back(subject);
+        }
+        
+        res.set_content(successResponse(result).dump(), "application/json");
     });
 }
 
@@ -374,7 +409,7 @@ void setupStudentEndpoints(httplib::Server& svr) {
     // Get all students
     svr.Get("/api/students", [](const httplib::Request& req, httplib::Response& res) {
         try {
-            auto students = db->getAllStudents();
+            auto students = DB_CALL(db->getAllStudents());
             json result = json::array();
             
             for (const auto& studentMap : students) {
@@ -390,7 +425,7 @@ void setupStudentEndpoints(httplib::Server& svr) {
                 if (studentMap.find("class_id") != studentMap.end() && !studentMap.at("class_id").empty() && studentMap.at("class_id") != "0") {
                     int classId = stoi(studentMap.at("class_id"));
                     student["classId"] = classId;
-                    auto classInfo = db->getClassById(classId);
+                    auto classInfo = DB_CALL(db->getClassById(classId));
                     if (!classInfo.empty() && classInfo.find("class_name") != classInfo.end()) {
                         student["className"] = classInfo["class_name"];
                     } else {
@@ -415,8 +450,9 @@ void setupStudentEndpoints(httplib::Server& svr) {
         auto body = json::parse(req.body);
         string name = body["name"];
         
-        if (db->createStudent(name, 0)) {
-            res.set_content(successResponse().dump(), "application/json");
+        int newId = DB_CALL(db->createStudent(name, 0));
+        if (newId > 0) {
+            res.set_content(successResponse({{"id", newId}}).dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to create student").dump(), "application/json");
         }
@@ -426,7 +462,7 @@ void setupStudentEndpoints(httplib::Server& svr) {
     svr.Delete("/api/students/(\\d+)", [](const httplib::Request& req, httplib::Response& res) {
         int studentId = stoi(req.matches[1]);
         
-        if (db->deleteStudent(studentId)) {
+        if (DB_CALL(db->deleteStudent(studentId))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to delete student").dump(), "application/json");
@@ -437,12 +473,12 @@ void setupStudentEndpoints(httplib::Server& svr) {
     svr.Post("/api/students/(\\d+)/assign-class", [](const httplib::Request& req, httplib::Response& res) {
         int studentId = stoi(req.matches[1]);
         auto body = json::parse(req.body);
-        int classId = body["classId"];
+        int classId = getIntField(body, "classId", 0);
         
-        auto student = db->getStudentById(studentId);
+        auto student = DB_CALL(db->getStudentById(studentId));
         if (!student.empty()) {
-            db->deleteStudent(studentId);
-            if (db->createStudent(student["name"], classId)) {
+            DB_CALL(db->deleteStudent(studentId));
+            if (DB_CALL(db->createStudent(student["name"], classId))) {
                 res.set_content(successResponse().dump(), "application/json");
             } else {
                 res.set_content(errorResponse("Failed to assign student").dump(), "application/json");
@@ -458,7 +494,7 @@ void setupStudentEndpoints(httplib::Server& svr) {
         auto body = json::parse(req.body);
         string newName = body["name"];
         
-        if (db->updateStudentName(studentId, newName)) {
+        if (DB_CALL(db->updateStudentName(studentId, newName))) {
             res.set_content(successResponse().dump(), "application/json");
         } else {
             res.set_content(errorResponse("Failed to update profile").dump(), "application/json");
@@ -477,18 +513,45 @@ void setupAttendanceEndpoints(httplib::Server& svr) {
                 res.set_content(errorResponse("Missing required fields").dump(), "application/json");
                 return;
             }
-            int studentId = body["studentId"];
-            int subjectId = body["subjectId"];
+            int studentId = getIntField(body, "studentId", 0);
+            int subjectId = getIntField(body, "subjectId", 0);
             string date = body["date"];
             string status = body["status"];
         
-        auto student = db->getStudentById(studentId);
+        auto student = DB_CALL(db->getStudentById(studentId));
         int classId = 0;
         if (!student.empty() && student.find("class_id") != student.end() && !student["class_id"].empty()) {
             classId = stoi(student["class_id"]);
         }
+
+            if (classId == 0) {
+                res.set_content(errorResponse("Student is not assigned to any class").dump(), "application/json");
+                return;
+            }
+
+            // Verify subject is assigned to student's class
+            auto classSubjects = DB_CALL(db->getClassSubjects(classId));
+            bool subjectInClass = false;
+            for (const auto& s : classSubjects) {
+                auto it = s.find("subject_id");
+                if (it != s.end()) {
+                    try {
+                        if (stoi(it->second) == subjectId) { subjectInClass = true; break; }
+                    } catch (...) {}
+                }
+            }
+            if (!subjectInClass) {
+                res.set_content(errorResponse("Subject is not assigned to the student's class").dump(), "application/json");
+                return;
+            }
+
+            // Check duplicate attendance for same student-subject-date
+            if (DB_CALL(db->isAttendanceMarked(studentId, subjectId, date))) {
+                res.set_content(errorResponse("Attendance already marked for this student, subject, and date").dump(), "application/json");
+                return;
+            }
         
-            if (classId > 0 && db->markAttendance(studentId, subjectId, classId, date, status)) {
+            if (classId > 0 && DB_CALL(db->markAttendance(studentId, subjectId, classId, date, status))) {
                 res.set_content(successResponse().dump(), "application/json");
             } else {
                 res.set_content(errorResponse("Failed to mark attendance").dump(), "application/json");
@@ -503,7 +566,7 @@ void setupAttendanceEndpoints(httplib::Server& svr) {
         int studentId = stoi(req.matches[1]);
         int subjectId = stoi(req.matches[2]);
         
-        auto allRecords = db->getStudentAttendance(studentId);
+        auto allRecords = DB_CALL(db->getStudentAttendance(studentId));
         json result = json::array();
         
         for (const auto& recordMap : allRecords) {
@@ -523,7 +586,7 @@ void setupAttendanceEndpoints(httplib::Server& svr) {
     svr.Get("/api/students/(\\d+)/attendance-percentage", [](const httplib::Request& req, httplib::Response& res) {
         int studentId = stoi(req.matches[1]);
         
-        auto allRecords = db->getStudentAttendance(studentId);
+        auto allRecords = DB_CALL(db->getStudentAttendance(studentId));
         int totalDays = allRecords.size();
         int presentDays = 0;
         
@@ -542,7 +605,7 @@ void setupAttendanceEndpoints(httplib::Server& svr) {
         int studentId = stoi(req.matches[1]);
         int subjectId = stoi(req.matches[2]);
         
-        double percentage = db->getAttendancePercentage(studentId, subjectId);
+        double percentage = DB_CALL(db->getAttendancePercentage(studentId, subjectId));
         res.set_content(successResponse({{"percentage", percentage}}).dump(), "application/json");
     });
 
@@ -552,14 +615,14 @@ void setupAttendanceEndpoints(httplib::Server& svr) {
         string date = req.get_param_value("date");
         int subjectId = stoi(req.get_param_value("subjectId"));
         
-        auto students = db->getStudentsByClass(classId);
+        auto students = DB_CALL(db->getStudentsByClass(classId));
         json result = json::array();
         
         for (const auto& studentMap : students) {
             if (!studentMap.count("id") || !studentMap.count("name")) continue;
             
             int studentId = stoi(studentMap.at("id"));
-            auto records = db->getStudentAttendance(studentId);
+            auto records = DB_CALL(db->getStudentAttendance(studentId));
             string status = "Not Marked";
             
             for (const auto& record : records) {
@@ -587,7 +650,7 @@ void setupAttendanceEndpoints(httplib::Server& svr) {
         int subjectId = stoi(req.get_param_value("subjectId"));
         string date = req.get_param_value("date");
         
-        bool isMarked = db->isAttendanceMarked(studentId, subjectId, date);
+        bool isMarked = DB_CALL(db->isAttendanceMarked(studentId, subjectId, date));
         res.set_content(successResponse({{"isMarked", isMarked}}).dump(), "application/json");
     });
 }
@@ -630,6 +693,11 @@ int main() {
         {"Access-Control-Allow-Headers", "Content-Type"}
     });
 
+    // Logger
+    svr.set_logger([](const httplib::Request& req, const httplib::Response& res) {
+        cout << "[" << req.method << "] " << req.path << " -> " << res.status << endl;
+    });
+
     svr.Options(".*", [](const httplib::Request&, httplib::Response& res) {
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -660,8 +728,35 @@ int main() {
         }
     });
 
-    // Serve static files
-    svr.set_mount_point("/", "./web/public");
+    // Serve static files (resolve path based on current working directory)
+    namespace fs = std::filesystem;
+    vector<fs::path> staticCandidates = {
+        fs::current_path() / "web/public",        // when run from project root
+        fs::current_path() / "public",            // when run from web/
+        fs::current_path() / "../public",         // when run from web/bin/
+        fs::current_path() / "../../web/public"   // fallback
+    };
+    string staticDir;
+    for (const auto& p : staticCandidates) {
+        std::error_code ec;
+        if (fs::exists(p, ec) && fs::is_directory(p, ec)) {
+            staticDir = p.string();
+            break;
+        }
+    }
+    if (staticDir.empty()) {
+        cerr << "Could not locate static folder. Expected one of:" << endl;
+        for (const auto& p : staticCandidates) {
+            cerr << "  - " << p << endl;
+        }
+        cerr << "Start the server from the project root or adjust paths." << endl;
+        return 1;
+    }
+    svr.set_mount_point("/", staticDir.c_str());
+    
+    // Set multi-threaded mode (8 threads)
+    // Note: Database access is protected by mutex, so this is safe but serialized at DB level
+    svr.new_task_queue = [] { return new httplib::ThreadPool(8); };
 
     cout << "API Server running on http://localhost:8080" << endl;
     cout << "Access web interface at http://localhost:8080" << endl;
