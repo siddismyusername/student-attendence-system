@@ -1,0 +1,19 @@
+# Add build directories and executables to gitignore
+build/
+*.o
+*.exe
+attendance_system
+
+# Config file with credentials (users should copy from template)
+config.txt
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,281 @@
+@startuml
+
+'===========================
+'      UTILITY LAYER
+'===========================
+
+class UIHelper <<static>> {
+    +{static} clearScreen()
+    +{static} pause()
+    +{static} printHeader(title: string)
+    +{static} printSeparator(width: int, ch: char)
+}
+
+class Config <<static>> {
+    +{static} getConnectionString(): string
+    -{static} trim(str: string): string
+    -{static} strip_quotes(str: string): string
+}
+
+
+'===========================
+'      DATABASE LAYER
+'===========================
+
+class Database {
+    -conn: pqxx::connection*
+    +Database(connStr: string)
+    +~Database()
+    +initializeTables()
+    +insertDefaultAdmin()
+    
+    ' Authentication
+    +authenticateAdmin(email, password): result
+    +authenticateTeacher(email, password): result
+    
+    ' CRUD - Subjects
+    +createSubject(name, maxMarks): int
+    +getAllSubjects(): result
+    +getSubjectById(id): result
+    
+    ' CRUD - Classes
+    +createClass(className): int
+    +getAllClasses(): result
+    +getClassById(id): result
+    +getClassSubjects(classId): result
+    
+    ' CRUD - Teachers
+    +createTeacher(name, email, password, salary, joinDate, type): int
+    +getAllTeachers(): result
+    +getTeacherAssignments(teacherId): result
+    +getTeacherClassAssignment(teacherId): result
+    +assignClassTeacher(classId, teacherId)
+    +assignSubjectTeacher(teacherId, subjectId, classId)
+    
+    ' CRUD - Students
+    +createStudent(name, classId): int
+    +getAllStudents(): result
+    +getStudentById(id): result
+    +getStudentsByClass(classId): result
+    
+    ' Attendance Operations
+    +markAttendance(studentId, subjectId, classId, date, status)
+    +getStudentAttendance(studentId): result
+    +getClassAttendance(classId): result
+    +getAttendancePercentage(studentId, subjectId): double
+    +addSubjectToClass(classId, subjectId)
+}
+
+
+'===========================
+'     CONTROLLER LAYER
+'===========================
+
+abstract class BaseController {
+    #db: Database*
+    #clearInputBuffer()
+    #getInput(prompt: string): string
+    #getIntInput(prompt: string): int
+    #getDoubleInput(prompt: string): double
+    #getDate(day&, month&, year&, prompt: string)
+    #formatDate(day, month, year): string
+    +BaseController(database: Database*)
+    +{abstract} showMenu()
+}
+
+class AdminController {
+    +AdminController(db: Database*)
+    +createSubject()
+    +createClass()
+    +createTeacher()
+    +createStudent()
+    +assignClassTeacher()
+    +assignSubjectTeacher()
+    +viewAllSubjects()
+    +viewAllClasses()
+    +viewAllTeachers()
+    +viewAllStudents()
+    +showMenu()
+}
+
+class TeacherController {
+    -teacherId: int
+    -teacherName: string
+    -teacherType: string
+    +TeacherController(db: Database*, id, name, type)
+    +markAttendance()
+    +viewStudentAttendance()
+    +viewClassAttendance()
+    +showMenu()
+}
+
+class StudentController {
+    -studentId: int
+    -studentName: string
+    +StudentController(db: Database*, id, name)
+    +viewMyAttendance()
+    +viewAttendancePercentage()
+    +showMenu()
+}
+
+
+'===========================
+'      DATABASE ENTITIES
+'    (Supabase PostgreSQL)
+'===========================
+
+entity "admins" as admin_table {
+    *admin_id: SERIAL
+    --
+    email: VARCHAR(255)
+    password: VARCHAR(255)
+}
+
+entity "teachers" as teacher_table {
+    *teacher_id: SERIAL
+    --
+    name: VARCHAR(255)
+    email: VARCHAR(255)
+    password: VARCHAR(255)
+    salary: DECIMAL(10,2)
+    join_date: DATE
+    teacher_type: VARCHAR(50)
+}
+
+entity "students" as student_table {
+    *student_id: SERIAL
+    --
+    name: VARCHAR(255)
+    class_id: INT
+}
+
+entity "classes" as class_table {
+    *class_id: SERIAL
+    --
+    class_name: VARCHAR(100)
+}
+
+entity "subjects" as subject_table {
+    *subject_id: SERIAL
+    --
+    name: VARCHAR(255)
+    max_marks: INT
+}
+
+entity "teacher_class_assignments" as tca_table {
+    *assignment_id: SERIAL
+    --
+    class_id: INT
+    teacher_id: INT
+}
+
+entity "teacher_subject_assignments" as tsa_table {
+    *assignment_id: SERIAL
+    --
+    teacher_id: INT
+    subject_id: INT
+    class_id: INT
+}
+
+entity "class_subjects" as cs_table {
+    *id: SERIAL
+    --
+    class_id: INT
+    subject_id: INT
+}
+
+entity "attendance_records" as attendance_table {
+    *attendance_id: SERIAL
+    --
+    student_id: INT
+    subject_id: INT
+    class_id: INT
+    attendance_date: DATE
+    status: VARCHAR(20)
+}
+
+
+'===========================
+'       INHERITANCE
+'===========================
+
+BaseController <|-- AdminController
+BaseController <|-- TeacherController
+BaseController <|-- StudentController
+
+
+'===========================
+'      DEPENDENCIES
+'===========================
+
+' Controllers depend on Database
+AdminController ..> Database : uses
+TeacherController ..> Database : uses
+StudentController ..> Database : uses
+
+' Controllers use UIHelper
+AdminController ..> UIHelper : uses
+TeacherController ..> UIHelper : uses
+StudentController ..> UIHelper : uses
+
+' Database uses Config
+Database ..> Config : uses
+
+' Database manages all tables
+Database --> admin_table : manages
+Database --> teacher_table : manages
+Database --> student_table : manages
+Database --> class_table : manages
+Database --> subject_table : manages
+Database --> tca_table : manages
+Database --> tsa_table : manages
+Database --> cs_table : manages
+Database --> attendance_table : manages
+
+
+'===========================
+'    TABLE RELATIONSHIPS
+'===========================
+
+student_table }o--|| class_table : belongs to
+attendance_table }o--|| student_table : records
+attendance_table }o--|| subject_table : for
+attendance_table }o--|| class_table : in
+tca_table }o--|| class_table : assigns
+tca_table }o--|| teacher_table : assigns
+tsa_table }o--|| teacher_table : assigns
+tsa_table }o--|| subject_table : assigns
+tsa_table }o--|| class_table : for
+cs_table }o--|| class_table : has
+cs_table }o--|| subject_table : includes
+
+
+'===========================
+'         NOTES
+'===========================
+
+note right of Database
+  PostgreSQL connection via libpqxx
+  Connects to Supabase cloud database
+  Manages 9 tables with full CRUD operations
+end note
+
+note right of BaseController
+  Abstract base class providing
+  common input/output helpers
+  for all controllers
+end note
+
+note right of UIHelper
+  Static utility class for
+  cross-platform UI operations
+  and user interaction
+end note
+
+note bottom of TeacherController
+  Supports two teacher types:
+  - ClassTeacher: Can view class attendance
+  - SubjectTeacher: Marks for specific subjects
+end note
+
+@enduml
